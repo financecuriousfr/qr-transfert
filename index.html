@@ -67,6 +67,27 @@
   .item.done .bar i { background: var(--ok); }
   .item.fail .bar i { background: var(--err); }
   .empty { color: var(--muted); font-size: 14px; margin: 0; }
+  .actions { display: flex; gap: 8px; margin-top: 10px; }
+  #viewer {
+    position: fixed; inset: 0; z-index: 10; background: rgba(8, 9, 12, .94);
+    display: flex; flex-direction: column; color: #eef0f4;
+  }
+  #viewerBar { display: flex; align-items: center; gap: 10px; padding: 10px 12px; flex: none; }
+  #viewerName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 14px; }
+  #viewerBar button.ghost { color: #eef0f4; border-color: #3a3f4b; }
+  #viewerBody {
+    flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
+    padding: 0 12px 12px; overflow: auto;
+  }
+  #viewerBody img, #viewerBody video { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; }
+  #viewerBody audio { width: min(480px, 100%); }
+  #viewerBody iframe { width: 100%; height: 100%; border: 0; border-radius: 6px; background: #fff; }
+  #viewerBody pre {
+    align-self: stretch; width: 100%; margin: 0; padding: 14px; overflow: auto; border-radius: 6px;
+    background: #1a1d23; font: 13px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-word;
+  }
+  #viewerBody .none { text-align: center; color: #9aa1ad; }
+  #viewerBody .none .btn { margin-top: 14px; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -121,6 +142,15 @@
     </div>
   </div>
 </main>
+
+<div id="viewer" hidden role="dialog" aria-modal="true" aria-label="Aperçu du fichier">
+  <div id="viewerBar">
+    <span id="viewerName"></span>
+    <a id="viewerSave" class="btn">Enregistrer</a>
+    <button id="viewerClose" class="ghost">Fermer</button>
+  </div>
+  <div id="viewerBody"></div>
+</div>
 
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
@@ -289,17 +319,112 @@
   function finishIncoming() {
     var f = incoming;
     incoming = null;
-    var blob = new Blob(f.parts, { type: f.type || 'application/octet-stream' });
+    var type = f.type || guessType(f.name);
+    var blob = new Blob(f.parts, { type: type || 'application/octet-stream' });
     f.parts = null;
     var url = URL.createObjectURL(blob);
     f.item.done(fmtSize(f.size));
+    var actions = document.createElement('div');
+    actions.className = 'actions';
+    var view = document.createElement('button');
+    view.className = 'ghost';
+    view.textContent = 'Aperçu';
+    view.addEventListener('click', function () { openViewer(f.name, type, url, blob); });
     var a = document.createElement('a');
     a.className = 'btn';
     a.href = url;
     a.download = f.name;
     a.textContent = 'Enregistrer';
-    f.item.el.querySelector('.row').appendChild(a);
+    actions.appendChild(view);
+    actions.appendChild(a);
+    f.item.el.appendChild(actions);
   }
+
+  // ---------- Aperçu ----------
+  var EXT = {
+    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp',
+    svg: 'image/svg+xml', bmp: 'image/bmp', avif: 'image/avif',
+    mp4: 'video/mp4', m4v: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime',
+    mp3: 'audio/mpeg', m4a: 'audio/mp4', wav: 'audio/wav', ogg: 'audio/ogg', flac: 'audio/flac',
+    pdf: 'application/pdf',
+    txt: 'text/plain', md: 'text/plain', csv: 'text/plain', log: 'text/plain', json: 'text/plain',
+    xml: 'text/plain', html: 'text/plain', css: 'text/plain', js: 'text/plain', py: 'text/plain'
+  };
+  var TEXT_MAX = 2 * 1024 * 1024;
+
+  function guessType(name) {
+    var m = /\.([a-z0-9]+)$/i.exec(name);
+    return (m && EXT[m[1].toLowerCase()]) || '';
+  }
+
+  function note(text, url) {
+    var d = document.createElement('div');
+    d.className = 'none';
+    d.appendChild(document.createTextNode(text));
+    if (url) {
+      d.appendChild(document.createElement('br'));
+      var a = document.createElement('a');
+      a.className = 'btn';
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = 'Ouvrir dans un nouvel onglet';
+      d.appendChild(a);
+    }
+    return d;
+  }
+
+  function openViewer(name, type, url, blob) {
+    var body = $('viewerBody'), el;
+    var isText = /^text\//.test(type) || type === 'application/json' || /^text\//.test(guessType(name));
+    body.textContent = '';
+    $('viewerName').textContent = name;
+    $('viewerSave').href = url;
+    $('viewerSave').download = name;
+
+    if (/^image\//.test(type)) {
+      el = document.createElement('img');
+      el.alt = name;
+      el.src = url;
+      el.onerror = function () { body.textContent = ''; body.appendChild(note('Cette image ne peut pas être affichée ici.')); };
+    } else if (/^video\//.test(type)) {
+      el = document.createElement('video');
+      el.controls = true;
+      el.playsInline = true;
+      el.src = url;
+      el.onerror = function () { body.textContent = ''; body.appendChild(note('Ce format vidéo ne peut pas être lu ici. Enregistre le fichier pour l\'ouvrir.')); };
+    } else if (/^audio\//.test(type)) {
+      el = document.createElement('audio');
+      el.controls = true;
+      el.src = url;
+    } else if (type === 'application/pdf') {
+      if (navigator.pdfViewerEnabled) {
+        el = document.createElement('iframe');
+        el.title = name;
+        el.src = url;
+      } else {
+        el = note('L\'aperçu PDF intégré n\'est pas disponible sur cet appareil.', url);
+      }
+    } else if (isText && blob.size <= TEXT_MAX) {
+      el = document.createElement('pre');
+      el.textContent = 'Chargement…';
+      blob.text().then(function (t) { el.textContent = t; });
+    } else {
+      el = note('Pas d\'aperçu possible pour ce type de fichier.');
+    }
+    body.appendChild(el);
+    $('viewer').hidden = false;
+    $('viewerClose').focus();
+  }
+
+  function closeViewer() {
+    $('viewer').hidden = true;
+    $('viewerBody').textContent = '';   // coupe aussi la vidéo ou le son en cours
+  }
+
+  $('viewerClose').addEventListener('click', closeViewer);
+  $('viewerBody').addEventListener('click', function (e) { if (e.target === $('viewerBody')) closeViewer(); });
+  window.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('viewer').hidden) closeViewer(); });
 
   // ---------- Connexion ----------
   function attach(c) {
