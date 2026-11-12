@@ -124,6 +124,7 @@
 
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<script src="config.js"></script>
 <script>
 (function () {
   'use strict';
@@ -137,7 +138,13 @@
   var qrBox = $('qrBox'), transfer = $('transfer');
   var drop = $('drop'), picker = $('picker');
 
-  var roomId = location.hash.replace(/^#/, '');
+  // lien du QR code : #r=<id>&u=<utilisateur relais>&c=<mot de passe relais>  (ancien format : #<id>)
+  var hash = location.hash.replace(/^#/, '');
+  var hp = hash.indexOf('=') >= 0 ? new URLSearchParams(hash) : null;
+  var roomId = hp ? (hp.get('r') || '') : hash;
+  var turnCred = null;
+  if (hp && hp.get('u') && hp.get('c')) turnCred = { username: hp.get('u'), credential: hp.get('c') };
+  else if (window.QRT_TURN && window.QRT_TURN.username) turnCred = window.QRT_TURN;
   var isHost = !roomId;
   var peer = null, conn = null;
   var sendQueue = [], sending = false;
@@ -331,7 +338,8 @@
       }
     }
     $('setup').hidden = true;
-    var url = base + '#' + id;
+    var url = base + '#r=' + id;
+    if (turnCred) url += '&u=' + encodeURIComponent(turnCred.username) + '&c=' + encodeURIComponent(turnCred.credential);
     var qr = qrcode(0, 'M');
     qr.addData(url);
     qr.make();
@@ -345,6 +353,12 @@
 
   // adresse en ligne de l'app : c'est elle que le QR code fait ouvrir au téléphone
   var PUBLIC_URL = 'https://financecuriousfr.github.io/qr-transfert/';
+
+  // serveur relais (TURN) : sert quand les deux appareils ne peuvent pas se joindre en direct (4G, etc.)
+  // laisser vide = pas de relais
+  // les identifiants ne sont PAS dans ce fichier (il est public sur GitHub) : le PC les lit dans
+  // config.js (fichier local, jamais mis en ligne) et les transmet au téléphone dans le QR code.
+  var TURN_URLS = ['turn:free.expressturn.com:3478', 'turn:free.expressturn.com:3478?transport=tcp'];
 
   function getPublicUrl() {
     try { return localStorage.getItem('qrt-url') || PUBLIC_URL; } catch (e) { return PUBLIC_URL; }
@@ -375,14 +389,24 @@
       return;
     }
     setStatus('', 'Connexion au service de mise en relation…');
-    peer = isHost ? new Peer(randomId()) : new Peer();
+    var ice = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun.cloudflare.com:3478' }];
+    if (turnCred) ice.push({ urls: TURN_URLS, username: turnCred.username, credential: turnCred.credential });
+    var options = { config: { iceServers: ice } };
+    peer = isHost ? new Peer(randomId(), options) : new Peer(options);
 
     peer.on('open', function (id) {
       if (isHost) {
         showQr(id);
       } else {
         setStatus('', 'Connexion à l\'autre appareil…');
-        attach(peer.connect(roomId, { serialization: 'raw', reliable: true }));
+        var c = peer.connect(roomId, { serialization: 'raw', reliable: true });
+        attach(c);
+        setTimeout(function () {
+          if (conn === c && !c.open) {
+            setStatus('err', 'Connexion impossible',
+              'Les deux réseaux ne laissent pas passer la liaison. Mets les deux appareils sur le même Wi-Fi, puis scanne à nouveau le QR code.');
+          }
+        }, 25000);
       }
     });
     peer.on('connection', function (c) { if (isHost) attach(c); });
