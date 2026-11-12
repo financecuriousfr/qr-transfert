@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QR Transfert</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #16181d; --muted: #6b7280;
+    --line: #e3e5ea; --accent: #2f6bff; --accent-text: #ffffff;
+    --ok: #12a150; --warn: #c97a00; --err: #d43c3c; --track: #e9ebf0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101216; --card: #1a1d23; --text: #eef0f4; --muted: #9aa1ad;
+      --line: #2a2e37; --accent: #5b8cff; --accent-text: #0b0d12;
+      --ok: #3ccf7e; --warn: #f0b040; --err: #ff6b6b; --track: #2a2e37;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 560px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 14px; padding: 18px; margin-bottom: 16px;
+  }
+  .status { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--warn); flex: none; }
+  .dot.ok { background: var(--ok); }
+  .dot.err { background: var(--err); }
+  .hint { color: var(--muted); font-size: 14px; margin: 6px 0 0; }
+  #qrBox { text-align: center; }
+  #qr { width: min(260px, 70vw); margin: 14px auto 10px; background: #fff; padding: 10px; border-radius: 10px; }
+  #qr svg { display: block; width: 100%; height: auto; }
+  .linkrow { display: flex; gap: 8px; margin-top: 10px; }
+  .linkrow input {
+    flex: 1; min-width: 0; padding: 9px 10px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text); font-size: 13px;
+  }
+  button, .btn {
+    appearance: none; border: 0; border-radius: 8px; padding: 9px 14px;
+    background: var(--accent); color: var(--accent-text); font: inherit;
+    font-weight: 600; font-size: 14px; cursor: pointer; text-decoration: none;
+    display: inline-block; white-space: nowrap;
+  }
+  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
+  #drop {
+    border: 2px dashed var(--line); border-radius: 12px; padding: 28px 14px;
+    text-align: center; cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  #drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  #drop strong { display: block; font-size: 17px; margin-bottom: 4px; }
+  #drop span { color: var(--muted); font-size: 14px; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  .item { padding: 10px 0; border-top: 1px solid var(--line); }
+  .item:first-of-type { border-top: 0; padding-top: 0; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 14px; }
+  .meta { color: var(--muted); font-size: 13px; flex: none; }
+  .bar { height: 6px; background: var(--track); border-radius: 3px; margin-top: 8px; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 3px; transition: width .1s linear; }
+  .item.done .bar i { background: var(--ok); }
+  .item.fail .bar i { background: var(--err); }
+  .empty { color: var(--muted); font-size: 14px; margin: 0; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>QR Transfert</h1>
+  <p class="sub">Envoie et reçois des fichiers entre deux appareils, en direct, sans stockage en ligne.</p>
+
+  <div class="card">
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">Démarrage…</span></div>
+    <p class="hint" id="statusHint"></p>
+  </div>
+
+  <div class="card" id="setup" hidden>
+    <h2>Adresse de l'app en ligne</h2>
+    <p class="hint" style="margin-top:0">Le téléphone a besoin de la version en ligne. Colle ici l'adresse GitHub Pages de l'app (à faire une seule fois).</p>
+    <div class="linkrow">
+      <input id="pubUrl" type="url" placeholder="https://ton-pseudo.github.io/qr-transfert/">
+      <button id="saveUrl">Valider</button>
+    </div>
+    <p class="hint" id="setupErr" style="color:var(--err)"></p>
+  </div>
+
+  <div class="card" id="qrBox" hidden>
+    <h2>Scanne ce QR code avec ton téléphone</h2>
+    <div id="qr"></div>
+    <p class="hint">Ou ouvre ce lien sur l'autre appareil :</p>
+    <div class="linkrow">
+      <input id="link" readonly>
+      <button id="copy" class="ghost">Copier</button>
+    </div>
+    <p class="hint" id="editRow" hidden><a href="#" id="editUrl" style="color:var(--accent)">Changer l'adresse en ligne</a></p>
+  </div>
+
+  <div id="transfer" hidden>
+    <div class="card">
+      <div id="drop" tabindex="0" role="button">
+        <strong>Choisir des fichiers à envoyer</strong>
+        <span>PDF, vidéos, photos… touche ici ou glisse-les</span>
+      </div>
+      <input type="file" id="picker" multiple hidden>
+    </div>
+
+    <div class="card">
+      <h2>Reçus</h2>
+      <div id="received"><p class="empty">Rien pour l'instant.</p></div>
+    </div>
+
+    <div class="card">
+      <h2>Envoyés</h2>
+      <div id="sent"><p class="empty">Rien pour l'instant.</p></div>
+    </div>
+  </div>
+</main>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var CHUNK = 64 * 1024;          // taille d'un morceau
+  var HIGH = 4 * 1024 * 1024;     // au-delà, on attend que le tampon se vide
+  var LOW = 1 * 1024 * 1024;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var dot = $('dot'), statusText = $('statusText'), statusHint = $('statusHint');
+  var qrBox = $('qrBox'), transfer = $('transfer');
+  var drop = $('drop'), picker = $('picker');
+
+  var roomId = location.hash.replace(/^#/, '');
+  var isHost = !roomId;
+  var peer = null, conn = null;
+  var sendQueue = [], sending = false;
+  var incoming = null;            // fichier en cours de réception
+  var rxChain = Promise.resolve();
+
+  function setStatus(kind, text, hint) {
+    dot.className = 'dot' + (kind ? ' ' + kind : '');
+    statusText.textContent = text;
+    statusHint.textContent = hint || '';
+  }
+
+  function fmtSize(n) {
+    if (n < 1024) return n + ' o';
+    if (n < 1048576) return (n / 1024).toFixed(0) + ' Ko';
+    if (n < 1073741824) return (n / 1048576).toFixed(1) + ' Mo';
+    return (n / 1073741824).toFixed(2) + ' Go';
+  }
+
+  function randomId() {
+    var a = new Uint8Array(8);
+    crypto.getRandomValues(a);
+    return 'qrt-' + Array.prototype.map.call(a, function (b) { return b.toString(36); }).join('');
+  }
+
+  // ---------- Liste des transferts ----------
+  function addItem(listId, name, size) {
+    var list = $(listId);
+    var empty = list.querySelector('.empty');
+    if (empty) empty.remove();
+    var el = document.createElement('div');
+    el.className = 'item';
+    el.innerHTML = '<div class="row"><span class="name"></span><span class="meta"></span></div><div class="bar"><i></i></div>';
+    el.querySelector('.name').textContent = name;
+    el.querySelector('.name').title = name;
+    list.prepend(el);
+    var item = {
+      el: el, size: size,
+      progress: function (done) {
+        var pct = size ? Math.min(100, done / size * 100) : 100;
+        el.querySelector('i').style.width = pct + '%';
+        el.querySelector('.meta').textContent = fmtSize(done) + ' / ' + fmtSize(size);
+      },
+      done: function (text) {
+        el.classList.add('done');
+        el.querySelector('i').style.width = '100%';
+        el.querySelector('.meta').textContent = text || fmtSize(size);
+      },
+      fail: function (text) {
+        el.classList.add('fail');
+        el.querySelector('.meta').textContent = text;
+      }
+    };
+    item.progress(0);
+    return item;
+  }
+
+  // ---------- Envoi ----------
+  function queueFiles(files) {
+    Array.prototype.forEach.call(files, function (f) {
+      sendQueue.push({ file: f, item: addItem('sent', f.name, f.size) });
+    });
+    pump();
+  }
+
+  function waitBuffer(dc) {
+    if (dc.bufferedAmount <= HIGH) return Promise.resolve();
+    return new Promise(function (resolve) {
+      dc.bufferedAmountLowThreshold = LOW;
+      var timer = setInterval(check, 200);
+      function check() {
+        if (dc.bufferedAmount <= LOW || dc.readyState !== 'open') finish();
+      }
+      function finish() {
+        clearInterval(timer);
+        dc.removeEventListener('bufferedamountlow', finish);
+        resolve();
+      }
+      dc.addEventListener('bufferedamountlow', finish);
+    });
+  }
+
+  async function pump() {
+    if (sending) return;
+    sending = true;
+    while (sendQueue.length) {
+      var job = sendQueue.shift();
+      try {
+        await sendFile(job.file, job.item);
+        job.item.done('Envoyé · ' + fmtSize(job.file.size));
+      } catch (e) {
+        job.item.fail('Échec');
+        console.error(e);
+      }
+    }
+    sending = false;
+  }
+
+  async function sendFile(file, item) {
+    if (!conn || !conn.open) throw new Error('non connecté');
+    var c = conn, dc = c.dataChannel;
+    c.send(JSON.stringify({ t: 'meta', name: file.name, size: file.size, type: file.type }));
+    var off = 0;
+    while (off < file.size) {
+      if (!c.open) throw new Error('connexion perdue');
+      var buf = await file.slice(off, off + CHUNK).arrayBuffer();
+      await waitBuffer(dc);
+      c.send(buf);
+      off += buf.byteLength;
+      item.progress(off);
+    }
+    c.send(JSON.stringify({ t: 'end' }));
+  }
+
+  // ---------- Réception ----------
+  function onData(data) {
+    // on traite les messages strictement dans l'ordre
+    rxChain = rxChain.then(function () { return handle(data); }).catch(console.error);
+  }
+
+  async function handle(data) {
+    if (typeof data === 'string') {
+      var msg = JSON.parse(data);
+      if (msg.t === 'meta') {
+        incoming = {
+          name: String(msg.name || 'fichier'), size: Number(msg.size) || 0,
+          type: String(msg.type || ''), parts: [], got: 0
+        };
+        incoming.item = addItem('received', incoming.name, incoming.size);
+      } else if (msg.t === 'end' && incoming) {
+        finishIncoming();
+      }
+      return;
+    }
+    if (!incoming) return;
+    if (data instanceof Blob) data = await data.arrayBuffer();
+    incoming.parts.push(data);
+    incoming.got += data.byteLength;
+    incoming.item.progress(incoming.got);
+  }
+
+  function finishIncoming() {
+    var f = incoming;
+    incoming = null;
+    var blob = new Blob(f.parts, { type: f.type || 'application/octet-stream' });
+    f.parts = null;
+    var url = URL.createObjectURL(blob);
+    f.item.done(fmtSize(f.size));
+    var a = document.createElement('a');
+    a.className = 'btn';
+    a.href = url;
+    a.download = f.name;
+    a.textContent = 'Enregistrer';
+    f.item.el.querySelector('.row').appendChild(a);
+  }
+
+  // ---------- Connexion ----------
+  function attach(c) {
+    if (conn && conn !== c) { try { conn.close(); } catch (e) {} }
+    conn = c;
+    c.on('open', function () {
+      qrBox.hidden = true;
+      transfer.hidden = false;
+      setStatus('ok', 'Connecté', 'Garde cette page ouverte sur les deux appareils pendant les transferts.');
+    });
+    c.on('data', onData);
+    c.on('close', function () {
+      if (conn !== c) return;
+      conn = null;
+      if (incoming) { incoming.item.fail('Interrompu'); incoming = null; }
+      if (isHost) {
+        qrBox.hidden = false;
+        setStatus('', 'Appareil déconnecté', 'Scanne à nouveau le QR code pour te reconnecter.');
+      } else {
+        setStatus('err', 'Déconnecté', 'Recharge la page ou scanne à nouveau le QR code.');
+      }
+    });
+    c.on('error', function (e) { console.error(e); });
+  }
+
+  function showQr(id) {
+    var base = location.href.split('#')[0];
+    if (isLocal) {
+      // ouverte depuis le PC (raccourci) : le QR doit pointer vers la version en ligne
+      base = getPublicUrl();
+      if (!base) {
+        qrBox.hidden = true;
+        $('setup').hidden = false;
+        setStatus('', 'Dernière étape', 'Indique l\'adresse en ligne de l\'app pour afficher le QR code.');
+        return;
+      }
+    }
+    $('setup').hidden = true;
+    var url = base + '#' + id;
+    var qr = qrcode(0, 'M');
+    qr.addData(url);
+    qr.make();
+    $('qr').innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+    $('link').value = url;
+    qrBox.hidden = false;
+    setStatus('', 'En attente de l\'autre appareil…');
+  }
+
+  var isLocal = /^(localhost|127\.|\[::1\])/.test(location.hostname) || location.protocol === 'file:';
+
+  // adresse en ligne de l'app : c'est elle que le QR code fait ouvrir au téléphone
+  var PUBLIC_URL = 'https://financecuriousfr.github.io/qr-transfert/';
+
+  function getPublicUrl() {
+    try { return localStorage.getItem('qrt-url') || PUBLIC_URL; } catch (e) { return PUBLIC_URL; }
+  }
+
+  $('saveUrl').addEventListener('click', function () {
+    var v = $('pubUrl').value.trim().split('#')[0];
+    if (!/^https:\/\/[^\s\/]+\.[^\s\/]+/.test(v)) {
+      $('setupErr').textContent = 'L\'adresse doit commencer par https://';
+      return;
+    }
+    if (!/\.html?$/.test(v) && v.slice(-1) !== '/') v += '/';
+    $('setupErr').textContent = '';
+    try { localStorage.setItem('qrt-url', v); } catch (e) {}
+    if (peer && peer.id) showQr(peer.id);
+  });
+  $('pubUrl').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('saveUrl').click(); });
+  $('editUrl').addEventListener('click', function (e) {
+    e.preventDefault();
+    $('pubUrl').value = getPublicUrl();
+    try { localStorage.removeItem('qrt-url'); } catch (err) {}
+    if (peer && peer.id) showQr(peer.id);
+  });
+
+  function start() {
+    if (typeof Peer === 'undefined' || typeof qrcode === 'undefined') {
+      setStatus('err', 'Chargement impossible', 'Vérifie ta connexion internet puis recharge la page.');
+      return;
+    }
+    setStatus('', 'Connexion au service de mise en relation…');
+    peer = isHost ? new Peer(randomId()) : new Peer();
+
+    peer.on('open', function (id) {
+      if (isHost) {
+        showQr(id);
+      } else {
+        setStatus('', 'Connexion à l\'autre appareil…');
+        attach(peer.connect(roomId, { serialization: 'raw', reliable: true }));
+      }
+    });
+    peer.on('connection', function (c) { if (isHost) attach(c); });
+    peer.on('disconnected', function () {
+      // le service de mise en relation a coupé : on se rebranche, sans toucher au transfert en cours
+      if (!peer.destroyed) setTimeout(function () { try { peer.reconnect(); } catch (e) {} }, 1500);
+    });
+    peer.on('error', function (e) {
+      console.error(e);
+      if (e.type === 'peer-unavailable') {
+        setStatus('err', 'Appareil introuvable', 'Le QR code a expiré : rouvre la page sur le premier appareil et scanne le nouveau code.');
+      } else if (e.type === 'browser-incompatible') {
+        setStatus('err', 'Navigateur non compatible', 'Essaie avec Chrome, Safari, Edge ou Firefox récent.');
+      } else if (!conn) {
+        setStatus('err', 'Erreur de connexion', 'Recharge la page pour réessayer.');
+      }
+    });
+  }
+
+  // ---------- Interface ----------
+  drop.addEventListener('click', function () { picker.click(); });
+  drop.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); picker.click(); }
+  });
+  picker.addEventListener('change', function () {
+    queueFiles(picker.files);
+    picker.value = '';
+  });
+  ['dragenter', 'dragover'].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('over'); });
+  });
+  drop.addEventListener('drop', function (e) {
+    if (e.dataTransfer && e.dataTransfer.files.length) queueFiles(e.dataTransfer.files);
+  });
+  window.addEventListener('dragover', function (e) { e.preventDefault(); });
+  window.addEventListener('drop', function (e) { e.preventDefault(); });
+
+  $('copy').addEventListener('click', function () {
+    var input = $('link');
+    input.select();
+    (navigator.clipboard ? navigator.clipboard.writeText(input.value) : Promise.reject())
+      .catch(function () { document.execCommand('copy'); });
+    $('copy').textContent = 'Copié';
+    setTimeout(function () { $('copy').textContent = 'Copier'; }, 1500);
+  });
+
+  window.addEventListener('hashchange', function () { location.reload(); });
+  window.addEventListener('beforeunload', function (e) {
+    if (sending || incoming) { e.preventDefault(); e.returnValue = ''; }
+  });
+
+  // exposé pour les tests
+  window.__qrt = { queueFiles: queueFiles };
+
+  start();
+})();
+</script>
+</body>
+</html>
